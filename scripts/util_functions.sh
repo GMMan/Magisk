@@ -26,6 +26,10 @@ BOOTSIGNERCLASS=a.a
 BOOTSIGNER="/system/bin/dalvikvm -Xnodex2oat -Xnoimage-dex2oat -cp \$APK \$BOOTSIGNERCLASS"
 BOOTSIGNED=false
 
+# MediaTek-specific
+MTK_BOOT_PART_NAME=bootimg
+MTK_FOUND=false
+
 ###################
 # Helper Functions
 ###################
@@ -230,6 +234,19 @@ get_flags() {
   [ -z $RECOVERYMODE ] && RECOVERYMODE=false
 }
 
+handle_mtk_boot_image() {
+  # Copies out boot image to file
+  local out_path=`pwd`/mtk_boot.img
+  if [ -f /proc/dumchar_info -a -c /dev/$MTK_BOOT_PART_NAME ]; then
+    local boot_image_size=$((`grep $MTK_BOOT_PART_NAME /proc/dumchar_info | awk '{ print $2 }'`))
+    local block_size=512
+    local block_count=$(($boot_image_size / $block_size))
+    dd if=/dev/$MTK_BOOT_PART_NAME of=$out_path bs=$block_size count=$block_count
+    BOOTIMAGE=$out_path
+    MTK_FOUND=true
+  fi
+}
+
 find_boot_image() {
   BOOTIMAGE=
   if $RECOVERYMODE; then
@@ -242,6 +259,10 @@ find_boot_image() {
   if [ -z $BOOTIMAGE ]; then
     # Lets see what fstabs tells me
     BOOTIMAGE=`grep -v '#' /etc/*fstab* | grep -E '/boot[^a-zA-Z]' | grep -oE '/dev/[a-zA-Z0-9_./-]*' | head -n 1`
+  fi
+  if [ -z $BOOTIMAGE ]; then
+    # Try for non-GPT MediaTek devices
+    handle_mtk_boot_image
   fi
 }
 
@@ -263,6 +284,8 @@ flash_image() {
     local blk_sz=`blockdev --getsize64 "$2"`
     [ $img_sz -gt $blk_sz ] && return 1
     eval $CMD1 | eval $CMD2 | cat - /dev/zero > "$2" 2>/dev/null
+  elif $MTK_FOUND; then
+    eval $CMD1 | eval $CMD2 > /dev/$MTK_BOOT_PART_NAME 2>/dev/null
   else
     ui_print "- Not block device, storing image"
     eval $CMD1 | eval $CMD2 > "$2" 2>/dev/null
